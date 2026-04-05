@@ -203,7 +203,11 @@ def login() -> None:
         config.set_val("profile.telegram", f"@{telegram}")
 
     # Luma email
-    luma_email = typer.prompt("Luma invite email", default="").strip()
+    while True:
+        luma_email = typer.prompt("Luma invite email", default="").strip()
+        if not luma_email or ("@" in luma_email and "." in luma_email.split("@")[-1]):
+            break
+        console.print("[red]Please enter a valid email address.[/red]")
     if luma_email:
         config.set_val("profile.luma_email", luma_email)
 
@@ -475,7 +479,11 @@ def profile_edit() -> None:
 
     # Luma email (optional)
     cur = config.get("profile.luma_email") or ""
-    val = typer.prompt("Luma invite email (optional, '-' to clear)", default=cur).strip()
+    while True:
+        val = typer.prompt("Luma invite email (optional, '-' to clear)", default=cur).strip()
+        if val == "-" or not val or ("@" in val and "." in val.split("@")[-1]):
+            break
+        console.print("[red]Please enter a valid email address.[/red]")
     if val == "-":
         config.set_val("profile.luma_email", None)
     elif val:
