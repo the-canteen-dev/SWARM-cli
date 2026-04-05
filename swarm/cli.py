@@ -256,7 +256,7 @@ def login() -> None:
         "\n[bold]Primary repo[/bold]  "
         "[dim]The repo where you do the majority of your work.[/dim]"
     )
-    repo_input = typer.prompt("owner/repo or GitHub URL (Enter to skip)", default="").strip()
+    repo_input = typer.prompt("owner/repo or GitHub URL", default="").strip()
     if repo_input:
         _set_repo_from_input(repo_input, github_handle=user["login"])
     else:
@@ -406,7 +406,7 @@ def _show_dashboard(refresh: bool = False) -> None:
         if not repo_public:
             lines.append("  [yellow]⚠ Consider making this repo public[/yellow]")
     else:
-        lines.append("  [dim]No repo set.[/dim]  Run [bold]swarm repo set owner/repo[/bold]")
+        lines.append("  [dim]No repo set.[/dim]")
 
     lines.append("")
 
@@ -440,6 +440,9 @@ def _show_dashboard(refresh: bool = False) -> None:
     # -> weak  (yellow)  — done before, just a nudge
     strong = "[bold magenta]=>[/bold magenta]"
     weak   = "[yellow]->[/yellow]"
+
+    if not repo_full:
+        lines.append(f"  {strong} Run [bold]swarm repo set owner/repo[/bold] to set your primary repo")
 
     if not telegram or not luma_email:
         lines.append(f"  {strong} Run [bold]swarm profile-edit[/bold] to complete your profile")
