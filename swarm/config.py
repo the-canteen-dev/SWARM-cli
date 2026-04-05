@@ -1,11 +1,25 @@
 """Local YAML-based storage for SWARM CLI state."""
 
+import re
 import yaml
 from pathlib import Path
 from typing import Any
 
 CONFIG_DIR = Path.home() / ".swarm"
 CONFIG_FILE = CONFIG_DIR / "config.yaml"
+
+# PyYAML auto-parses ISO datetime strings into datetime objects on load.
+# This custom dumper quotes them so they stay as plain strings.
+_ISO_RE = re.compile(r'^\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}')
+
+class _Dumper(yaml.Dumper):
+    pass
+
+def _str_representer(dumper: yaml.Dumper, data: str) -> yaml.ScalarNode:
+    style = "'" if _ISO_RE.match(data) else None
+    return dumper.represent_scalar('tag:yaml.org,2002:str', data, style=style)
+
+_Dumper.add_representer(str, _str_representer)
 
 
 def load() -> dict:
@@ -18,7 +32,7 @@ def load() -> dict:
 def save(data: dict) -> None:
     CONFIG_DIR.mkdir(parents=True, exist_ok=True)
     with open(CONFIG_FILE, "w") as f:
-        yaml.dump(data, f, default_flow_style=False, allow_unicode=True, sort_keys=False)
+        yaml.dump(data, f, Dumper=_Dumper, default_flow_style=False, allow_unicode=True, sort_keys=False)
 
 
 def get(key: str, default: Any = None) -> Any:

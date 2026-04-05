@@ -48,18 +48,29 @@ def _require_discord() -> None:
         raise typer.Exit(1)
 
 
-def _fmt_date(date_str: Optional[str]) -> str:
+def _fmt_date(date_str) -> str:
     if not date_str:
         return "unknown"
     try:
-        dt = datetime.fromisoformat(str(date_str))
+        if isinstance(date_str, datetime):
+            dt = date_str
+        else:
+            dt = datetime.fromisoformat(str(date_str))
         if dt.tzinfo is None:
             dt = dt.replace(tzinfo=timezone.utc)
         delta = datetime.now(timezone.utc) - dt
+        if delta.total_seconds() < 0:
+            return dt.strftime("%b %d, %Y")
         days = delta.days
         if days == 0:
             h = delta.seconds // 3600
-            return "just now" if h == 0 else f"{h}h ago"
+            m = (delta.seconds % 3600) // 60
+            s = delta.seconds % 60
+            if h == 0 and m == 0:
+                return "just now" if s < 5 else f"{s}s ago"
+            if h == 0:
+                return f"{m}m ago"
+            return f"{h}h ago"
         if days == 1:
             return "yesterday"
         if days < 7:
