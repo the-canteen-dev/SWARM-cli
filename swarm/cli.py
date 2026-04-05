@@ -21,7 +21,7 @@ app = typer.Typer(
 profile_app = typer.Typer(help="View and edit your profile.", no_args_is_help=False)
 team_app = typer.Typer(help="Manage teammates.", no_args_is_help=True)
 repo_app = typer.Typer(help="Track your primary repo.", no_args_is_help=False)
-update_app = typer.Typer(help="Submit traction and product updates.", no_args_is_help=True)
+update_app = typer.Typer(help="Submit traction and product updates.", no_args_is_help=False)
 
 app.add_typer(profile_app, name="profile")
 app.add_typer(team_app, name="team")
@@ -111,21 +111,46 @@ def _get_streak_data(force_refresh: bool = False) -> dict:
 
 
 def _get_multiline_text(hint: str) -> Optional[str]:
-    """Open $EDITOR for multiline input; fall back to a single prompt."""
-    import click
+    """Collect multiline input inline. Empty line to finish."""
+    console.print(f"[dim]{hint}[/dim]")
+    console.print("[dim](Empty line to finish)[/dim]\n")
+    lines = []
+    while True:
+        try:
+            line = input()
+        except EOFError:
+            break
+        if line == "":
+            if lines:
+                break
+        else:
+            lines.append(line)
+    return "\n".join(lines).strip() or None
 
-    template = f"\n\n# {hint}\n# (Lines starting with # are ignored. Save and close when done.)\n"
-    try:
-        result = click.edit(template)
-        if result is None:
-            return None
-        lines = [ln for ln in result.splitlines() if not ln.startswith("#")]
-        text = "\n".join(lines).strip()
-        return text or None
-    except Exception:
-        console.print(f"[dim]({hint})[/dim]")
-        text = typer.prompt("Enter text").strip()
-        return text or None
+
+def _recent_updates(n: int = 5) -> list[dict]:
+    """Return the n most recent updates across both traction and product."""
+    traction = [{"kind": "traction", **u} for u in (config.get("updates.traction") or [])]
+    product = [{"kind": "product", **u} for u in (config.get("updates.product") or [])]
+    combined = sorted(traction + product, key=lambda u: u.get("date", ""), reverse=True)
+    return combined[:n]
+
+
+def _print_updates(updates: list[dict], full: bool = False) -> None:
+    """Print a list of update dicts."""
+    if not updates:
+        console.print("[dim]No updates yet.[/dim]")
+        return
+    for u in updates:
+        kind = u.get("kind", "")
+        kind_label = "[cyan]product[/cyan]" if kind == "product" else "[green]traction[/green]"
+        date_label = f"[dim]{_fmt_date(u.get('date'))}[/dim]"
+        console.print(f"\n  {kind_label}  {date_label}")
+        text = u.get("text", "")
+        limit = None if full else 120
+        if text:
+            snippet = text if (full or len(text) <= 120) else text[:120] + "…"
+            console.print(f"  {snippet}")
 
 
 # ---------------------------------------------------------------------------
@@ -281,21 +306,64 @@ def _show_dashboard(refresh: bool = False) -> None:
         lines.append(f"  [dim]Team[/dim]  {team_str}")
         lines.append("")
 
-    # ── Updates ──
+    # ── Recent updates ──
+    recent = _recent_updates(5)
+    if recent:
+        lines.append("  [dim]Recent updates[/dim]")
+        for u in recent:
+            kind = u.get("kind", "")
+            kind_label = "[cyan]product[/cyan] " if kind == "product" else "[green]traction[/green]"
+            date_label = f"[dim]{_fmt_date(u.get('date'))}[/dim]"
+            text = u.get("text", "")
+            snippet = (text[:80] + "…") if len(text) > 80 else text
+            lines.append(f"  {kind_label}  {date_label}  {snippet}")
+    else:
+        lines.append(
+            "  [dim]No updates yet.[/dim]  "
+            "Run [bold]swarm update traction[/bold] or [bold]swarm update product[/bold]"
+        )
+
+    console.print(Panel("\n".join(lines), title=title, border_style="cyan", padding=(0, 1)))
+
+
+# ---------------------------------------------------------------------------
+# swarm ls / swarm history
+# ---------------------------------------------------------------------------
+
+@app.command("ls")
+def ls(
+    kind: Annotated[str, typer.Argument(help="traction | product | all")] = "all",
+) -> None:
+    """List all updates (traction and product)."""
+    _require_login()
+    _print_all_updates(kind, full=True)
+
+
+@app.command("history")
+def history(
+    kind: Annotated[str, typer.Argument(help="traction | product | all")] = "all",
+) -> None:
+    """List all updates (alias for swarm ls)."""
+    _require_login()
+    _print_all_updates(kind, full=True)
+
+
+def _print_all_updates(kind: str, full: bool = False) -> None:
     traction = config.get("updates.traction") or []
     product = config.get("updates.product") or []
 
-    if traction:
-        lines.append(f"  [dim]Traction update[/dim]  {_fmt_date(traction[-1].get('date'))}")
+    if kind == "traction":
+        updates = [{"kind": "traction", **u} for u in traction]
+    elif kind == "product":
+        updates = [{"kind": "product", **u} for u in product]
     else:
-        lines.append("  [dim]No traction update.[/dim]  Run [bold]swarm update traction[/bold]")
+        updates = (
+            [{"kind": "traction", **u} for u in traction]
+            + [{"kind": "product", **u} for u in product]
+        )
 
-    if product:
-        lines.append(f"  [dim]Product update[/dim]   {_fmt_date(product[-1].get('date'))}")
-    else:
-        lines.append("  [dim]No product update.[/dim]   Run [bold]swarm update product[/bold]")
-
-    console.print(Panel("\n".join(lines), title=title, border_style="cyan", padding=(0, 1)))
+    updates = sorted(updates, key=lambda u: u.get("date", ""), reverse=True)
+    _print_updates(updates, full=full)
 
 
 # ---------------------------------------------------------------------------
@@ -467,15 +535,6 @@ def _repo_status(refresh: bool = False) -> None:
     console.print(Panel("\n".join(lines), title="[bold]Repo Activity[/bold]", border_style="green"))
 
 
-@repo_app.command("status")
-def repo_status(
-    refresh: Annotated[bool, typer.Option("--refresh", "-r")] = False,
-) -> None:
-    """Show commit streak and activity for your repo."""
-    _require_login()
-    _repo_status(refresh=refresh)
-
-
 @repo_app.command("set")
 def repo_set(
     repo: str = typer.Argument(..., help="owner/repo or full GitHub URL"),
@@ -503,7 +562,7 @@ def repo_set(
     config.set_val("repo.full_name", full_name)
     config.set_val("repo.url", repo_data["html_url"])
     config.set_val("repo.is_public", is_public)
-    config.set_val("cache.streak", None)  # invalidate cache
+    config.set_val("cache.streak", None)
 
     console.print(f"[green]Repo set:[/green] {full_name}")
 
@@ -519,9 +578,17 @@ def repo_set(
 # swarm update
 # ---------------------------------------------------------------------------
 
+@update_app.callback(invoke_without_command=True)
+def _update_root(ctx: typer.Context) -> None:
+    """Show recent updates, or submit a new one."""
+    if ctx.invoked_subcommand is None:
+        _require_login()
+        _print_all_updates("all")
+
+
 @update_app.command("traction")
 def update_traction() -> None:
-    """Submit a traction update (users, interest, examples)."""
+    """Submit a traction update — who's interested, who's using it."""
     _require_login()
     _require_discord()
 
@@ -546,62 +613,25 @@ def update_traction() -> None:
 
 @update_app.command("product")
 def update_product() -> None:
-    """Submit a product update (new features, Luma or other link)."""
+    """Submit a product update — what you've shipped. Include a Loom if you have one."""
     _require_login()
     _require_discord()
 
     console.print("[bold]Product Update[/bold]")
-    console.print("[dim]What have you shipped since your last update?[/dim]\n")
-
-    link = typer.prompt(
-        "Link (Luma event, demo, etc. — optional, press Enter to skip)",
-        default="",
-    ).strip()
-
-    text = _get_multiline_text(
-        "What new features have you added since your last update?"
+    console.print(
+        "[dim]What have you shipped? Include a Loom link in your update if you have one.[/dim]\n"
     )
 
-    if not text and not link:
+    text = _get_multiline_text(
+        "What have you shipped since your last update? "
+        "Paste a Loom link (loom.com/share/...) if you have one — "
+        "then describe the new features."
+    )
+    if not text:
         console.print("[yellow]No update submitted.[/yellow]")
         return
 
-    entry: dict = {"date": datetime.now(timezone.utc).isoformat()}
-    if link:
-        entry["link"] = link
-    if text:
-        entry["text"] = text
-
     updates: list = config.get("updates.product") or []
-    updates.append(entry)
+    updates.append({"date": datetime.now(timezone.utc).isoformat(), "text": text})
     config.set_val("updates.product", updates)
     console.print("\n[green]Product update saved.[/green]")
-
-
-@update_app.command("history")
-def update_history(
-    kind: Annotated[str, typer.Argument(help="traction | product | all")] = "all",
-) -> None:
-    """View recent update history."""
-    _require_login()
-
-    if kind in ("traction", "all"):
-        items = config.get("updates.traction") or []
-        console.print("[bold]Traction Updates[/bold]" if items else "[dim]No traction updates yet.[/dim]")
-        for u in list(reversed(items))[:5]:
-            console.print(f"\n  [dim]{_fmt_date(u.get('date'))}[/dim]")
-            text = u.get("text", "")
-            console.print(f"  {text[:300]}{'…' if len(text) > 300 else ''}")
-
-    if kind in ("product", "all"):
-        if kind == "all":
-            console.print()
-        items = config.get("updates.product") or []
-        console.print("[bold]Product Updates[/bold]" if items else "[dim]No product updates yet.[/dim]")
-        for u in list(reversed(items))[:5]:
-            console.print(f"\n  [dim]{_fmt_date(u.get('date'))}[/dim]")
-            if u.get("link"):
-                console.print(f"  [cyan]{u['link']}[/cyan]")
-            text = u.get("text", "")
-            if text:
-                console.print(f"  {text[:300]}{'…' if len(text) > 300 else ''}")
