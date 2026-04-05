@@ -218,22 +218,49 @@ def login() -> None:
 
     console.print(f"\n[bold green]Logged in as @{user['login']}[/bold green]")
 
-    with console.status("[dim]Registering with SWARM _push...[/dim]"):
+    with console.status("[dim]Registering with SWARM server...[/dim]"):
         ok = _push.cli_login(token)
     if not ok:
         console.print("[dim]Could not reach SWARM server — will retry later.[/dim]")
 
-    # Require Discord immediately if not set
-    if not config.has_discord():
-        console.print(
-            "\n[bold]One more thing[/bold] — your Discord handle is required to complete setup."
-        )
+    _push.push_event("login", {"github_username": user["login"]})
+
+    # Profile setup
+    console.print("\n[bold]Complete your profile[/bold]\n")
+
+    # Discord (required)
+    discord = typer.prompt("Discord handle").strip().lstrip("@")
+    while not discord:
+        console.print("[red]Discord handle cannot be empty.[/red]")
         discord = typer.prompt("Discord handle").strip().lstrip("@")
-        while not discord:
-            console.print("[red]Discord handle cannot be empty.[/red]")
-            discord = typer.prompt("Discord handle").strip().lstrip("@")
-        config.set_val("profile.discord", discord)
-        console.print(f"[green]Discord set:[/green] @{discord}")
+    config.set_val("profile.discord", discord)
+
+    # Telegram
+    telegram = typer.prompt("Telegram handle", default="").strip().lstrip("@")
+    if telegram:
+        config.set_val("profile.telegram", f"@{telegram}")
+
+    # Luma email
+    luma_email = typer.prompt("Luma invite email", default="").strip()
+    if luma_email:
+        config.set_val("profile.luma_email", luma_email)
+
+    _push.push_event("profile_edit", {
+        "discord": config.get("profile.discord"),
+        "telegram": config.get("profile.telegram"),
+        "luma_email": config.get("profile.luma_email"),
+    })
+
+    # Repo
+    console.print(
+        "\n[bold]Primary repo[/bold]  "
+        "[dim]The repo where you do the majority of your work.[/dim]"
+    )
+    repo_input = typer.prompt("owner/repo or GitHub URL (Enter to skip)", default="").strip()
+    if repo_input:
+        _set_repo_from_input(repo_input, github_handle=user["login"])
+    else:
+        console.print("[dim]Skipped — run [bold]swarm repo set[/bold] when ready.[/dim]")
 
     console.print(
         "\nRun [bold cyan]swarm status[/bold cyan] to see your dashboard, "
@@ -291,6 +318,50 @@ def status(
     """Show your SWARM dashboard."""
     _require_login()
     _show_dashboard(refresh=refresh)
+
+
+def _set_repo_from_input(repo_input: str, github_handle: Optional[str] = None) -> bool:
+    """Validate and save a repo. Returns True on success. Prints errors inline."""
+    try:
+        owner, repo_name = github.parse_repo_input(repo_input)
+    except ValueError as e:
+        console.print(f"[red]{e}[/red]")
+        return False
+
+    token = config.get("auth.github_token")
+    with console.status(f"Checking {owner}/{repo_name}..."):
+        repo_data = github.get_repo(token, owner, repo_name)
+
+    if repo_data is None:
+        console.print(f"[red]Repo not found:[/red] {owner}/{repo_name}")
+        return False
+
+    is_public = not repo_data.get("private", True)
+    full_name = repo_data["full_name"]
+
+    config.set_val("repo.full_name", full_name)
+    config.set_val("repo.url", repo_data["html_url"])
+    config.set_val("repo.is_public", is_public)
+    config.set_val("cache.streak", None)
+
+    _push.push_event("repo_set", {"repo": full_name, "is_public": is_public})
+
+    console.print(f"[green]Repo set:[/green] {full_name}")
+
+    handle = github_handle or config.get("auth.github_handle")
+    if handle and owner.lower() != handle.lower():
+        console.print(
+            f"[yellow]⚠ This repo belongs to [bold]{owner}[/bold], "
+            f"not your GitHub account ([bold]{handle}[/bold]).[/yellow]"
+        )
+
+    if not is_public:
+        console.print(
+            "[yellow]⚠ This repo is private.[/yellow]\n"
+            "  [dim]Making it public lets your cohort see your progress.[/dim]"
+        )
+
+    return True
 
 
 def _show_dashboard(refresh: bool = False) -> None:
@@ -583,38 +654,8 @@ def repo_set(
     """Set your primary work repo."""
     _require_login()
 
-    try:
-        owner, repo_name = github.parse_repo_input(repo)
-    except ValueError as e:
-        console.print(f"[red]{e}[/red]")
+    if not _set_repo_from_input(repo):
         raise typer.Exit(1)
-
-    token = config.get("auth.github_token")
-    with console.status(f"Checking {owner}/{repo_name}..."):
-        repo_data = github.get_repo(token, owner, repo_name)
-
-    if repo_data is None:
-        console.print(f"[red]Repo not found:[/red] {owner}/{repo_name}")
-        raise typer.Exit(1)
-
-    is_public = not repo_data.get("private", True)
-    full_name = repo_data["full_name"]
-
-    config.set_val("repo.full_name", full_name)
-    config.set_val("repo.url", repo_data["html_url"])
-    config.set_val("repo.is_public", is_public)
-    config.set_val("cache.streak", None)
-
-    _push.push_event("repo_set", {"repo": full_name, "is_public": is_public})
-
-    console.print(f"[green]Repo set:[/green] {full_name}")
-
-    if not is_public:
-        console.print(
-            "\n[yellow]⚠ This repo is private.[/yellow]\n"
-            "  We recommend making it public so your work is visible.\n"
-            f"  [dim]{repo_data['html_url']}/settings → Danger Zone → Change visibility[/dim]"
-        )
 
 
 # ---------------------------------------------------------------------------
