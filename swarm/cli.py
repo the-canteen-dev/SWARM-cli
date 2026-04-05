@@ -145,7 +145,7 @@ def _root(ctx: typer.Context) -> None:
                 padding=(1, 2),
             ))
         else:
-            _show_dashboard(refresh=False)
+            _show_dashboard()
 
 
 # ---------------------------------------------------------------------------
