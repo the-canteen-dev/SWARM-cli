@@ -308,14 +308,10 @@ def _show_dashboard(refresh: bool = False) -> None:
     lines: list[str] = []
 
     # ── Profile ──
-    if discord:
-        lines.append(f"  [dim]Discord[/dim]   @{discord}")
-    else:
-        lines.append("  [dim]Discord[/dim]   [yellow]not set[/yellow] — run [bold]swarm profile edit[/bold]")
-    if telegram:
-        lines.append(f"  [dim]Telegram[/dim]  {telegram}")
-    if luma_email:
-        lines.append(f"  [dim]Email[/dim]     {luma_email}")
+    lines.append(f"  [dim]GitHub[/dim]    @{handle}")
+    lines.append(f"  [dim]Discord[/dim]   " + (f"@{discord}" if discord else "[red]not set[/red]"))
+    lines.append(f"  [dim]Telegram[/dim]  " + (telegram if telegram else "[red]not set[/red]"))
+    lines.append(f"  [dim]Email[/dim]     " + (luma_email if luma_email else "[red]not set[/red]"))
     lines.append("")
 
     # ── Repo + streak ──
@@ -354,16 +350,38 @@ def _show_dashboard(refresh: bool = False) -> None:
             text = u.get("text", "")
             snippet = (text[:80] + "…") if len(text) > 80 else text
             lines.append(f"  {kind_label}  {date_label}  {snippet}")
-    else:
-        lines.append(
-            "  [dim]No updates yet.[/dim]  "
-            "Run [bold]swarm update traction[/bold] or [bold]swarm update product[/bold]"
-        )
 
     lines.append("")
-    lines.append(
-        "  [dim]swarm update-traction[/dim] · [dim]swarm update-product[/dim]"
-    )
+
+    # ── Call to action ──
+    traction_updates = config.get("updates.traction") or []
+    product_updates = config.get("updates.product") or []
+
+    def _last_date(updates: list) -> Optional[str]:
+        if not updates:
+            return None
+        return max(u.get("date", "") for u in updates) or None
+
+    last_traction = _last_date(traction_updates)
+    last_product  = _last_date(product_updates)
+
+    # => strong (magenta) — never done this action
+    # -> weak  (yellow)  — done before, just a nudge
+    strong = "[bold magenta]=>[/bold magenta]"
+    weak   = "[yellow]->[/yellow]"
+
+    if not telegram or not luma_email:
+        lines.append(f"  {strong} Run [bold]swarm profile-edit[/bold] to complete your profile")
+
+    if not last_traction:
+        lines.append(f"  {strong} Run [bold]swarm update-traction[/bold] to log users you've talked to or onboarded  [dim](no traction updates yet)[/dim]")
+    else:
+        lines.append(f"  {weak} Run [bold]swarm update-traction[/bold] to log users you've talked to or onboarded  [dim](last update {_fmt_date(last_traction)})[/dim]")
+
+    if not last_product:
+        lines.append(f"  {strong} Run [bold]swarm update-product[/bold] to share feature and product updates  [dim](no product updates yet)[/dim]")
+    else:
+        lines.append(f"  {weak} Run [bold]swarm update-product[/bold] to share feature and product updates  [dim](last update {_fmt_date(last_product)})[/dim]")
 
     console.print(Panel("\n".join(lines), title=title, border_style="cyan", padding=(0, 1)))
 
@@ -388,6 +406,13 @@ def history(
     """List all updates (alias for swarm ls)."""
     _require_login()
     _print_all_updates(kind, full=True)
+
+
+@app.command("profile-edit")
+def profile_edit_shortcut() -> None:
+    """Shortcut for swarm profile edit."""
+    _require_login()
+    profile_edit()
 
 
 @app.command("update-traction")
@@ -445,7 +470,7 @@ def _profile_show() -> None:
     if name:
         table.add_row("Name", name)
     discord = config.get("profile.discord")
-    table.add_row("Discord", f"@{discord}" if discord else "[yellow]not set[/yellow]")
+    table.add_row("Discord", f"@{discord}" if discord else "[red]not set[/red]")
     telegram = config.get("profile.telegram")
     if telegram:
         table.add_row("Telegram", telegram)
