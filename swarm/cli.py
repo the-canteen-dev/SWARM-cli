@@ -9,7 +9,7 @@ from rich.table import Table
 from typing import Annotated, Optional
 from datetime import datetime, timezone
 
-from . import config, auth, github, streak
+from . import config, auth
 from . import push as _push
 
 app = typer.Typer(
@@ -20,11 +20,9 @@ app = typer.Typer(
 )
 
 profile_app = typer.Typer(help="View and edit your profile.", no_args_is_help=False)
-repo_app = typer.Typer(help="Track your primary repo.", no_args_is_help=False)
 update_app = typer.Typer(help="Submit traction and product updates.", no_args_is_help=False)
 
 app.add_typer(profile_app, name="profile")
-app.add_typer(repo_app, name="repo")
 app.add_typer(update_app, name="update")
 
 console = Console()
@@ -82,42 +80,6 @@ def _fmt_date(date_str) -> str:
         return dt.strftime("%b %d, %Y")
     except Exception:
         return str(date_str)
-
-
-def _get_streak_data(force_refresh: bool = False) -> dict:
-    """Return streak stats, using a 1-hour cache."""
-    cached = config.get("cache.streak")
-    if not force_refresh and cached:
-        fetched_at_str = cached.get("fetched_at")
-        if fetched_at_str:
-            try:
-                fetched_at = datetime.fromisoformat(str(fetched_at_str))
-                if fetched_at.tzinfo is None:
-                    fetched_at = fetched_at.replace(tzinfo=timezone.utc)
-                age = (datetime.now(timezone.utc) - fetched_at).total_seconds()
-                if age < 3600:
-                    return cached
-            except Exception:
-                pass
-
-    token = config.get("auth.github_token")
-    repo_full = config.get("repo.full_name")
-    if not token or not repo_full:
-        return {}
-
-    try:
-        owner, repo_name = repo_full.split("/", 1)
-        with console.status(f"[dim]Fetching commits from {repo_full}...[/dim]"):
-            commits = github.get_commits(token, owner, repo_name)
-
-        dates = streak.parse_commit_dates(commits)
-        data = streak.calculate(dates)
-        data["fetched_at"] = datetime.now(timezone.utc).isoformat()
-        config.set_val("cache.streak", data)
-        return data
-    except Exception as e:
-        console.print(f"[dim]Could not fetch commits: {e}[/dim]")
-        return cached or {}
 
 
 def _get_multiline_text(hint: str) -> Optional[str]:
@@ -251,17 +213,6 @@ def login() -> None:
         "luma_email": config.get("profile.luma_email"),
     })
 
-    # Repo
-    console.print(
-        "\n[bold]Primary repo[/bold]  "
-        "[dim]The repo where you do the majority of your work.[/dim]"
-    )
-    repo_input = typer.prompt("owner/repo or GitHub URL", default="").strip()
-    if repo_input:
-        _set_repo_from_input(repo_input, github_handle=user["login"])
-    else:
-        console.print("[dim]Skipped — run [bold]swarm repo set[/bold] when ready.[/dim]")
-
     console.print(
         "\nRun [bold cyan]swarm status[/bold cyan] to see your dashboard, "
         "or [bold cyan]swarm --help[/bold cyan] to explore commands."
@@ -312,66 +263,18 @@ def push() -> None:
 # ---------------------------------------------------------------------------
 
 @app.command()
-def status(
-    refresh: Annotated[bool, typer.Option("--refresh", "-r", help="Force-refresh commit data")] = False,
-) -> None:
+def status() -> None:
     """Show your SWARM dashboard."""
     _require_login()
-    _show_dashboard(refresh=refresh)
+    _show_dashboard()
 
 
-def _set_repo_from_input(repo_input: str, github_handle: Optional[str] = None) -> bool:
-    """Validate and save a repo. Returns True on success. Prints errors inline."""
-    try:
-        owner, repo_name = github.parse_repo_input(repo_input)
-    except ValueError as e:
-        console.print(f"[red]{e}[/red]")
-        return False
-
-    token = config.get("auth.github_token")
-    with console.status(f"Checking {owner}/{repo_name}..."):
-        repo_data = github.get_repo(token, owner, repo_name)
-
-    if repo_data is None:
-        console.print(f"[red]Repo not found:[/red] {owner}/{repo_name}")
-        return False
-
-    is_public = not repo_data.get("private", True)
-    full_name = repo_data["full_name"]
-
-    config.set_val("repo.full_name", full_name)
-    config.set_val("repo.url", repo_data["html_url"])
-    config.set_val("repo.is_public", is_public)
-    config.set_val("cache.streak", None)
-
-    _push.push_event("repo_set", {"repo": full_name, "is_public": is_public})
-
-    console.print(f"[green]Repo set:[/green] {full_name}")
-
-    handle = github_handle or config.get("auth.github_handle")
-    if handle and owner.lower() != handle.lower():
-        console.print(
-            f"[yellow]⚠ This repo belongs to [bold]{owner}[/bold], "
-            f"not your GitHub account ([bold]{handle}[/bold]).[/yellow]"
-        )
-
-    if not is_public:
-        console.print(
-            "[yellow]⚠ This repo is private.[/yellow]\n"
-            "  [dim]Making it public lets your cohort see your progress.[/dim]"
-        )
-
-    return True
-
-
-def _show_dashboard(refresh: bool = False) -> None:
+def _show_dashboard() -> None:
     handle = config.get("auth.github_handle")
     name = config.get("auth.github_name")
     discord = config.get("profile.discord")
     telegram = config.get("profile.telegram")
     luma_email = config.get("profile.luma_email")
-    repo_full = config.get("repo.full_name")
-    repo_public = config.get("repo.is_public")
     title = f"[bold cyan]@{handle}[/bold cyan]"
     if name and name != handle:
         title += f"  [dim]{name}[/dim]"
@@ -383,31 +286,6 @@ def _show_dashboard(refresh: bool = False) -> None:
     lines.append(f"  [dim]Discord[/dim]   " + (f"@{discord}" if discord else "[red]not set[/red]"))
     lines.append(f"  [dim]Telegram[/dim]  " + (telegram if telegram else "[red]not set[/red]"))
     lines.append(f"  [dim]Email[/dim]     " + (luma_email if luma_email else "[red]not set[/red]"))
-    lines.append("")
-
-    # ── Repo + streak ──
-    if repo_full:
-        badge = "[green]public[/green]" if repo_public else "[red]private[/red]"
-        lines.append(f"  [dim]Repo[/dim]  [bold]{repo_full}[/bold]  {badge}")
-
-        data = _get_streak_data(force_refresh=refresh)
-        if data:
-            bar = streak.render_bar(data.get("weekly", {}))
-            current = data.get("current", 0)
-            longest = data.get("longest", 0)
-            total = data.get("total", 0)
-            color = streak.streak_color(current)
-            lines.append(f"  [dim]{bar}[/dim]  [dim](12 wks)[/dim]")
-            lines.append(
-                f"  Streak [{color}]{current}d[/{color}]  "
-                f"│ Longest [bold]{longest}d[/bold]  "
-                f"│ Commits [bold]{total}[/bold]"
-            )
-        if not repo_public:
-            lines.append("  [yellow]⚠ Consider making this repo public[/yellow]")
-    else:
-        lines.append("  [dim]No repo set.[/dim]")
-
     lines.append("")
 
     # ── Recent updates ──
@@ -436,13 +314,8 @@ def _show_dashboard(refresh: bool = False) -> None:
     last_traction = _last_date(traction_updates)
     last_product  = _last_date(product_updates)
 
-    # => strong (magenta) — never done this action
-    # -> weak  (yellow)  — done before, just a nudge
     strong = "[bold magenta]=>[/bold magenta]"
     weak   = "[yellow]->[/yellow]"
-
-    if not repo_full:
-        lines.append(f"  {strong} Run [bold]swarm repo set owner/repo[/bold] to set your primary repo")
 
     if not telegram or not luma_email:
         lines.append(f"  {strong} Run [bold]swarm profile-edit[/bold] to complete your profile")
@@ -616,72 +489,6 @@ def profile_edit() -> None:
 
     console.print("\n[green]Profile updated.[/green]")
 
-
-
-# ---------------------------------------------------------------------------
-# swarm repo
-# ---------------------------------------------------------------------------
-
-@repo_app.callback(invoke_without_command=True)
-def _repo_root(ctx: typer.Context) -> None:
-    """Show repo activity and streak."""
-    if ctx.invoked_subcommand is None:
-        _require_login()
-        _repo_status()
-
-
-def _repo_status(refresh: bool = False) -> None:
-    repo_full = config.get("repo.full_name")
-    if not repo_full:
-        console.print("[dim]No repo set.[/dim]  Run [bold]swarm repo set owner/repo[/bold]")
-        return
-
-    is_public = config.get("repo.is_public")
-    badge = "[green]public[/green]" if is_public else "[red]private[/red]"
-
-    data = _get_streak_data(force_refresh=refresh)
-    if not data:
-        console.print("[yellow]Could not fetch commit data.[/yellow]")
-        return
-
-    bar = streak.render_bar(data.get("weekly", {}))
-    current = data.get("current", 0)
-    longest = data.get("longest", 0)
-    total = data.get("total", 0)
-    last_commit = data.get("last_commit")
-    color = streak.streak_color(current)
-
-    lines = [
-        f"  {repo_full}  {badge}",
-        "",
-        f"  [bold]{bar}[/bold]",
-        f"  [dim]← 12 weeks ago                  now →[/dim]",
-        "",
-        f"  [dim]Current streak[/dim]  [{color}]{current} days[/{color}]",
-        f"  [dim]Longest streak[/dim]  [bold]{longest} days[/bold]",
-        f"  [dim]Total commits[/dim]   [bold]{total}[/bold]",
-    ]
-    if last_commit:
-        lines.append(f"  [dim]Last commit[/dim]     {_fmt_date(str(last_commit))}")
-    if not is_public:
-        lines.extend([
-            "",
-            "  [yellow]⚠ This repo is private.[/yellow]",
-            "  [dim]Making it public lets the cohort see your progress.[/dim]",
-        ])
-
-    console.print(Panel("\n".join(lines), title="[bold]Repo Activity[/bold]", border_style="green"))
-
-
-@repo_app.command("set")
-def repo_set(
-    repo: str = typer.Argument(..., help="owner/repo or full GitHub URL"),
-) -> None:
-    """Set your primary work repo."""
-    _require_login()
-
-    if not _set_repo_from_input(repo):
-        raise typer.Exit(1)
 
 
 # ---------------------------------------------------------------------------
