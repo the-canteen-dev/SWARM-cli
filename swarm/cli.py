@@ -505,6 +505,29 @@ def update_product_shortcut() -> None:
     update_product()
 
 
+@app.command("submit-puzzle")
+def submit_puzzle() -> None:
+    """Submit your answer to the current SWARM puzzle."""
+    _require_login()
+    _require_discord()
+
+    console.print("[bold]Puzzle Submission[/bold]")
+    console.print("[dim]Enter your answer below. Empty line to finish.[/dim]\n")
+
+    text = _get_multiline_text("Your answer")
+    if not text:
+        console.print("[yellow]No answer submitted.[/yellow]")
+        return
+
+    puzzles: list = config.get("puzzles") or []
+    puzzles.append({"date": datetime.now(timezone.utc).isoformat(), "text": text})
+    config.set_val("puzzles", puzzles)
+
+    _push.push_event("submit_puzzle", {"text": text})
+
+    console.print("\n[green]Puzzle answer submitted.[/green]")
+
+
 def _print_all_updates(kind: str, full: bool = False) -> None:
     traction = config.get("updates.traction") or []
     product = config.get("updates.product") or []
