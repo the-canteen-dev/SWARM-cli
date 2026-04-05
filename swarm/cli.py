@@ -10,6 +10,7 @@ from typing import Annotated, Optional
 from datetime import datetime, timezone
 
 from . import config, auth, github, streak
+from . import push as _push
 
 app = typer.Typer(
     name="swarm",
@@ -168,6 +169,11 @@ def _print_updates(updates: list[dict], full: bool = False) -> None:
 
 @app.callback(invoke_without_command=True)
 def _root(ctx: typer.Context) -> None:
+    if config.is_logged_in():
+        if not _push.ping():
+            console.print("[yellow](server unreachable — changes will sync when it's back up)[/yellow]")
+        else:
+            _push.drain_queue()
     if ctx.invoked_subcommand is None:
         if not config.is_logged_in():
             console.print(Panel(
@@ -212,6 +218,11 @@ def login() -> None:
 
     console.print(f"\n[bold green]Logged in as @{user['login']}[/bold green]")
 
+    with console.status("[dim]Registering with SWARM _push...[/dim]"):
+        ok = _push.cli_login(token)
+    if not ok:
+        console.print("[dim]Could not reach SWARM server — will retry later.[/dim]")
+
     # Require Discord immediately if not set
     if not config.has_discord():
         console.print(
@@ -238,10 +249,35 @@ def logout() -> None:
         return
     handle = config.get("auth.github_handle")
     if typer.confirm(f"Log out @{handle}?", default=True):
+        _push.push_event("logout", {"github_username": handle})
         cfg = config.load()
         cfg.pop("auth", None)
         config.save(cfg)
         console.print("[dim]Logged out.[/dim]")
+
+
+# ---------------------------------------------------------------------------
+# swarm push
+# ---------------------------------------------------------------------------
+
+@app.command()
+def push() -> None:
+    """Push any queued local events to the SWARM server."""
+    _require_login()
+    if not _push.ping():
+        console.print("[yellow]Server unreachable.[/yellow]")
+        return
+    count = _push.pending_count()
+    if count == 0:
+        console.print("[dim]Nothing to push.[/dim]")
+        return
+    console.print(f"Pushing [bold]{count}[/bold] queued event{'s' if count != 1 else ''}...")
+    _push.drain_queue()
+    remaining = _push.pending_count()
+    if remaining == 0:
+        console.print("[green]All events pushed.[/green]")
+    else:
+        console.print(f"[yellow]{remaining} still pending.[/yellow]")
 
 
 # ---------------------------------------------------------------------------
@@ -450,6 +486,12 @@ def profile_edit() -> None:
     elif val:
         config.set_val("profile.luma_email", val)
 
+    _push.push_event("profile_edit", {
+        "discord": config.get("profile.discord"),
+        "telegram": config.get("profile.telegram"),
+        "luma_email": config.get("profile.luma_email"),
+    })
+
     console.print("\n[green]Profile updated.[/green]")
 
 
@@ -538,6 +580,8 @@ def repo_set(
     config.set_val("repo.is_public", is_public)
     config.set_val("cache.streak", None)
 
+    _push.push_event("repo_set", {"repo": full_name, "is_public": is_public})
+
     console.print(f"[green]Repo set:[/green] {full_name}")
 
     if not is_public:
@@ -586,6 +630,9 @@ def update_traction() -> None:
     updates: list = config.get("updates.traction") or []
     updates.append({"date": datetime.now(timezone.utc).isoformat(), "text": text})
     config.set_val("updates.traction", updates)
+
+    _push.push_event("update_traction", {"text": text})
+
     console.print("\n[green]Traction update saved.[/green]")
 
 
@@ -612,4 +659,7 @@ def update_product() -> None:
     updates: list = config.get("updates.product") or []
     updates.append({"date": datetime.now(timezone.utc).isoformat(), "text": text})
     config.set_val("updates.product", updates)
+
+    _push.push_event("update_product", {"text": text})
+
     console.print("\n[green]Product update saved.[/green]")
