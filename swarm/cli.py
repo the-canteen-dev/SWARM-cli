@@ -19,12 +19,10 @@ app = typer.Typer(
 )
 
 profile_app = typer.Typer(help="View and edit your profile.", no_args_is_help=False)
-team_app = typer.Typer(help="Manage teammates.", no_args_is_help=True)
 repo_app = typer.Typer(help="Track your primary repo.", no_args_is_help=False)
 update_app = typer.Typer(help="Submit traction and product updates.", no_args_is_help=False)
 
 app.add_typer(profile_app, name="profile")
-app.add_typer(team_app, name="team")
 app.add_typer(repo_app, name="repo")
 app.add_typer(update_app, name="update")
 
@@ -256,8 +254,6 @@ def _show_dashboard(refresh: bool = False) -> None:
     luma_email = config.get("profile.luma_email")
     repo_full = config.get("repo.full_name")
     repo_public = config.get("repo.is_public")
-    teammates: list = config.get("teammates") or []
-
     title = f"[bold cyan]@{handle}[/bold cyan]"
     if name and name != handle:
         title += f"  [dim]{name}[/dim]"
@@ -300,12 +296,6 @@ def _show_dashboard(refresh: bool = False) -> None:
 
     lines.append("")
 
-    # ── Teammates ──
-    if teammates:
-        team_str = "  ".join(f"@{t}" for t in teammates)
-        lines.append(f"  [dim]Team[/dim]  {team_str}")
-        lines.append("")
-
     # ── Recent updates ──
     recent = _recent_updates(5)
     if recent:
@@ -322,6 +312,11 @@ def _show_dashboard(refresh: bool = False) -> None:
             "  [dim]No updates yet.[/dim]  "
             "Run [bold]swarm update traction[/bold] or [bold]swarm update product[/bold]"
         )
+
+    lines.append("")
+    lines.append(
+        "  [dim]swarm update-traction[/dim] · [dim]swarm update-product[/dim]"
+    )
 
     console.print(Panel("\n".join(lines), title=title, border_style="cyan", padding=(0, 1)))
 
@@ -346,6 +341,22 @@ def history(
     """List all updates (alias for swarm ls)."""
     _require_login()
     _print_all_updates(kind, full=True)
+
+
+@app.command("update-traction")
+def update_traction_shortcut() -> None:
+    """Shortcut for swarm update traction."""
+    _require_login()
+    _require_discord()
+    update_traction()
+
+
+@app.command("update-product")
+def update_product_shortcut() -> None:
+    """Shortcut for swarm update product."""
+    _require_login()
+    _require_discord()
+    update_product()
 
 
 def _print_all_updates(kind: str, full: bool = False) -> None:
@@ -430,54 +441,6 @@ def profile_edit() -> None:
 
     console.print("\n[green]Profile updated.[/green]")
 
-
-# ---------------------------------------------------------------------------
-# swarm team
-# ---------------------------------------------------------------------------
-
-@team_app.callback(invoke_without_command=True)
-def _team_root(ctx: typer.Context) -> None:
-    """List and manage teammates."""
-    if ctx.invoked_subcommand is None:
-        _require_login()
-        _team_list()
-
-
-def _team_list() -> None:
-    teammates: list = config.get("teammates") or []
-    if not teammates:
-        console.print("[dim]No teammates added yet.[/dim]  Run [bold]swarm team add <handle>[/bold]")
-        return
-    for t in teammates:
-        console.print(f"  @{t}")
-
-
-@team_app.command("add")
-def team_add(handle: str = typer.Argument(..., help="GitHub handle to add")) -> None:
-    """Add a teammate by GitHub handle."""
-    _require_login()
-    handle = handle.lstrip("@")
-    teammates: list = config.get("teammates") or []
-    if handle in teammates:
-        console.print(f"[yellow]@{handle} already in team.[/yellow]")
-        return
-    teammates.append(handle)
-    config.set_val("teammates", teammates)
-    console.print(f"[green]Added @{handle}[/green]")
-
-
-@team_app.command("remove")
-def team_remove(handle: str = typer.Argument(..., help="GitHub handle to remove")) -> None:
-    """Remove a teammate."""
-    _require_login()
-    handle = handle.lstrip("@")
-    teammates: list = config.get("teammates") or []
-    if handle not in teammates:
-        console.print(f"[yellow]@{handle} not in team.[/yellow]")
-        return
-    teammates.remove(handle)
-    config.set_val("teammates", teammates)
-    console.print(f"[dim]Removed @{handle}[/dim]")
 
 
 # ---------------------------------------------------------------------------
@@ -583,6 +546,10 @@ def _update_root(ctx: typer.Context) -> None:
     """Show recent updates, or submit a new one."""
     if ctx.invoked_subcommand is None:
         _require_login()
+        console.print(
+            "  [bold]swarm update-traction[/bold]  submit a traction update\n"
+            "  [bold]swarm update-product[/bold]   submit a product update\n"
+        )
         _print_all_updates("all")
 
 
